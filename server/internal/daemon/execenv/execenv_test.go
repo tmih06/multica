@@ -423,6 +423,38 @@ func TestWriteContextFilesOmitsSkillsWhenEmpty(t *testing.T) {
 	}
 }
 
+func TestWriteContextFilesIncludesWorkdirContext(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	ctx := TaskContextForEnv{
+		IssueID:      "issue-with-workdir",
+		TaskWorkDir:  "/tmp/ws/task/workdir",
+		PriorWorkDir: "/tmp/ws/prior/workdir",
+	}
+
+	if err := writeContextFiles(dir, "", ctx); err != nil {
+		t.Fatalf("writeContextFiles failed: %v", err)
+	}
+
+	content, err := os.ReadFile(filepath.Join(dir, ".agent_context", "issue_context.md"))
+	if err != nil {
+		t.Fatalf("failed to read: %v", err)
+	}
+
+	s := string(content)
+	for _, want := range []string{
+		"## Workdir Context",
+		"**Task workdir:** `/tmp/ws/task/workdir`",
+		"**Reused prior workdir:** `/tmp/ws/prior/workdir`",
+		"Repo checkouts are created lazily under the task workdir",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("issue_context.md missing %q\n---\n%s", want, s)
+		}
+	}
+}
+
 func TestWriteContextFilesAutopilotRunOnly(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -1078,6 +1110,41 @@ func TestInjectRuntimeConfigAvailableCommandsIsNeutral(t *testing.T) {
 					}
 				}
 			})
+		}
+	}
+}
+
+func TestInjectRuntimeConfigIncludesWorkdirContextAndRepoGuardrail(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	ctx := TaskContextForEnv{
+		IssueID:      "issue-1",
+		ProjectID:    "project-1",
+		ProjectTitle: "Multica",
+		TaskWorkDir:  "/tmp/ws/task/workdir",
+		PriorWorkDir: "/tmp/ws/prior/workdir",
+		ProjectResources: []ProjectResourceForEnv{{
+			ResourceType: "github_repo",
+			ResourceRef:  []byte(`{"url":"https://github.com/example/repo.git"}`),
+		}},
+	}
+	if _, err := InjectRuntimeConfig(dir, "opencode", ctx); err != nil {
+		t.Fatalf("InjectRuntimeConfig failed: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+	if err != nil {
+		t.Fatalf("read AGENTS.md: %v", err)
+	}
+	s := string(data)
+	for _, want := range []string{
+		"## Workdir Context",
+		"Task workdir: `/tmp/ws/task/workdir`",
+		"Reused prior workdir: `/tmp/ws/prior/workdir`",
+		"there may be no repo directory yet at startup",
+		"Do not infer the repo from neighboring workspace directories when project context is present",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("AGENTS.md missing %q\n---\n%s", want, s)
 		}
 	}
 }

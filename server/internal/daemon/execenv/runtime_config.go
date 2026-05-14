@@ -193,6 +193,17 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 		b.WriteString("\nThe checkout command creates a git worktree with a dedicated branch. You can check out one or more repos as needed, and can pass `--ref` for review/QA on a non-default branch or commit.\n\n")
 	}
 
+	if ctx.TaskWorkDir != "" || ctx.PriorWorkDir != "" {
+		b.WriteString("## Workdir Context\n\n")
+		if ctx.TaskWorkDir != "" {
+			fmt.Fprintf(&b, "- Task workdir: `%s`\n", ctx.TaskWorkDir)
+		}
+		if ctx.PriorWorkDir != "" {
+			fmt.Fprintf(&b, "- Reused prior workdir: `%s`\n", ctx.PriorWorkDir)
+		}
+		b.WriteString("- Repo checkouts are created lazily under the task workdir when you run `multica repo checkout`; there may be no repo directory yet at startup.\n\n")
+	}
+
 	// Inject project-scoped context (resources attached to the issue's project).
 	// The full structured payload is also available at .multica/project/resources.json
 	// so skills can consume it programmatically.
@@ -207,7 +218,7 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 				fmt.Fprintf(&b, "- %s\n", formatProjectResource(r))
 			}
 			b.WriteString("\nResources are pointers — open them only when relevant to the task. ")
-			b.WriteString("For `github_repo` resources, use `multica repo checkout <url>` to fetch the code. Add `--ref <branch-or-sha>` when a task or handoff names an exact revision.\n\n")
+			b.WriteString("For `github_repo` resources, use `multica repo checkout <url>` to fetch the code. Add `--ref <branch-or-sha>` when a task or handoff names an exact revision. Do not infer the repo from neighboring workspace directories when project context is present.\n\n")
 		} else {
 			b.WriteString("This project has no resources attached yet.\n\n")
 		}

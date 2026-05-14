@@ -162,3 +162,33 @@ func TestBuildPromptNonSquadLeaderNoRule(t *testing.T) {
 		t.Errorf("buildCommentPrompt must NOT inject squad leader no_action rule for non-squad-leader agents, got:\n%s", out)
 	}
 }
+
+func TestBuildPromptIncludesProjectRepoAndWorkdirContext(t *testing.T) {
+	task := Task{
+		IssueID:      "issue-123",
+		ProjectID:    "project-456",
+		ProjectTitle: "Multica",
+		TaskWorkDir:  "/tmp/ws/task/workdir",
+		PriorWorkDir: "/tmp/ws/prior/workdir",
+		Repos:        []RepoData{{URL: "https://github.com/example/repo.git"}},
+		ProjectResources: []ProjectResourceData{{
+			ResourceType: "github_repo",
+			ResourceRef:  []byte(`{"url":"https://github.com/example/repo.git","default_branch_hint":"main"}`),
+		}},
+	}
+	out := BuildPrompt(task, "claude")
+	for _, want := range []string{
+		"## Project & Repository Context",
+		"Project:** Multica (ID: `project-456`)",
+		"Task workdir:** `/tmp/ws/task/workdir`",
+		"Reused prior workdir:** `/tmp/ws/prior/workdir`",
+		"https://github.com/example/repo.git",
+		"default branch: `main`",
+		"do NOT infer the repo from nearby workspace directories",
+		"Read the AGENTS.md file already present in your working directory",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("BuildPrompt missing %q\n---\n%s", want, out)
+		}
+	}
+}

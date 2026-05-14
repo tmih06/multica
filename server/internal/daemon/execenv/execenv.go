@@ -52,6 +52,8 @@ type TaskContextForEnv struct {
 	ProjectID               string                  // issue's project, when present
 	ProjectTitle            string                  // human-readable project title
 	ProjectResources        []ProjectResourceForEnv // resources attached to the project
+	TaskWorkDir             string                  // task workdir reserved before any repo checkout happens
+	PriorWorkDir            string                  // reused workdir from a previous task on the same issue, when any
 	ChatSessionID           string                  // non-empty for chat tasks
 	AutopilotRunID          string                  // non-empty for autopilot run_only tasks
 	AutopilotID             string

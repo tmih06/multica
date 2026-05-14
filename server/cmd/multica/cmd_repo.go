@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/multica-ai/multica/server/internal/cli"
 	"github.com/spf13/cobra"
 )
 
@@ -29,6 +30,7 @@ var repoCheckoutRef string
 
 func init() {
 	repoCheckoutCmd.Flags().StringVar(&repoCheckoutRef, "ref", "", "branch, tag, or commit to check out instead of the remote default branch")
+	repoCheckoutCmd.Flags().String("output", "table", "Output format: table or json")
 	repoCmd.AddCommand(repoCheckoutCmd)
 }
 
@@ -84,9 +86,22 @@ func runRepoCheckout(cmd *cobra.Command, args []string) error {
 	var result struct {
 		Path       string `json:"path"`
 		BranchName string `json:"branch_name"`
+		BaseRef    string `json:"base_ref"`
+		Reused     bool   `json:"reused"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
 		return fmt.Errorf("parse response: %w", err)
+	}
+
+	output, _ := cmd.Flags().GetString("output")
+	if output == "json" {
+		return cli.PrintJSON(os.Stdout, map[string]any{
+			"url":         repoURL,
+			"path":        result.Path,
+			"branch_name": result.BranchName,
+			"base_ref":    result.BaseRef,
+			"reused":      result.Reused,
+		})
 	}
 
 	fmt.Fprintf(os.Stdout, "%s\n", result.Path)

@@ -500,6 +500,51 @@ func TestCreateWorktree(t *testing.T) {
 	if got := strings.TrimSpace(string(out)); got != result.BranchName {
 		t.Errorf("expected branch %q, got %q", result.BranchName, got)
 	}
+	if result.BaseRef == "" {
+		t.Error("expected BaseRef to be populated")
+	}
+	if result.Reused {
+		t.Error("expected first CreateWorktree call to create a new worktree, not reuse one")
+	}
+}
+
+func TestCreateWorktreeReportsReusedOnExistingWorktree(t *testing.T) {
+	t.Parallel()
+	sourceRepo := createTestRepo(t)
+	cacheRoot := t.TempDir()
+
+	cache := New(cacheRoot, testLogger())
+	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
+		t.Fatalf("sync failed: %v", err)
+	}
+
+	workDir := t.TempDir()
+	first, err := cache.CreateWorktree(WorktreeParams{
+		WorkspaceID: "ws-1",
+		RepoURL:     sourceRepo,
+		WorkDir:     workDir,
+		AgentName:   "Code Reviewer",
+		TaskID:      "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+	})
+	if err != nil {
+		t.Fatalf("first CreateWorktree failed: %v", err)
+	}
+	second, err := cache.CreateWorktree(WorktreeParams{
+		WorkspaceID: "ws-1",
+		RepoURL:     sourceRepo,
+		WorkDir:     workDir,
+		AgentName:   "Code Reviewer",
+		TaskID:      "ffffffff-e5f6-7890-abcd-ef1234567890",
+	})
+	if err != nil {
+		t.Fatalf("second CreateWorktree failed: %v", err)
+	}
+	if second.Path != first.Path {
+		t.Fatalf("reused worktree path = %q, want %q", second.Path, first.Path)
+	}
+	if !second.Reused {
+		t.Fatal("expected second CreateWorktree call to report Reused=true")
+	}
 }
 
 func TestCreateWorktreeExcludesOpenCodeSkills(t *testing.T) {

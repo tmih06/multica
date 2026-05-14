@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -32,6 +33,8 @@ func BuildPrompt(task Task, provider string) string {
 	fmt.Fprintf(&b, "Your assigned issue ID is: %s\n\n", task.IssueID)
 	fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then complete it.\n", task.IssueID)
 	fmt.Fprintf(&b, "If you need comment history, `multica issue comment list %s --output json` returns all comments for the issue (server caps at 2000). Pass `--since <RFC3339>` to fetch only comments newer than a known cursor.\n", task.IssueID)
+	b.WriteString(buildProjectRepoContext(task))
+	b.WriteString("Read the AGENTS.md file already present in your working directory for full context (available commands, project resources, workflow instructions).\n")
 	return b.String()
 }
 
@@ -136,6 +139,8 @@ func buildCommentPrompt(task Task, provider string) string {
 	}
 	fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then decide how to proceed.\n\n", task.IssueID)
 	fmt.Fprintf(&b, "If you need comment history, `multica issue comment list %s --output json` returns all comments for the issue (server caps at 2000). Pass `--since <RFC3339>` to fetch only comments newer than a known cursor.\n\n", task.IssueID)
+	b.WriteString(buildProjectRepoContext(task))
+	b.WriteString("\nRead the AGENTS.md file already present in your working directory for full context (available commands, project resources, workflow instructions).\n\n")
 	b.WriteString(execenv.BuildCommentReplyInstructions(provider, task.IssueID, task.TriggerCommentID))
 	return b.String()
 }
@@ -199,5 +204,79 @@ func buildAutopilotPrompt(task Task) string {
 		b.WriteString("Complete the instructions above.\n")
 	}
 	b.WriteString("Do not run `multica issue get`; this run does not have an issue ID.\n")
+	return b.String()
+}
+
+// buildProjectRepoContext returns startup-safe project/repo/workdir context
+// for issue-bound tasks. A true repo checkout path may not exist yet because
+// worktrees are created lazily via `multica repo checkout`, but the task
+// workdir and any reused prior workdir are known early and should be surfaced.
+func buildProjectRepoContext(task Task) string {
+	hasProject := task.ProjectID != "" || task.ProjectTitle != ""
+	hasRepos := len(task.Repos) > 0
+	hasResources := len(task.ProjectResources) > 0
+	hasWorkDir := task.TaskWorkDir != "" || task.PriorWorkDir != ""
+
+	if !hasProject && !hasRepos && !hasWorkDir {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("\n## Project & Repository Context\n\n")
+
+	if hasProject {
+		b.WriteString("**Project:** ")
+		if task.ProjectTitle != "" {
+			b.WriteString(task.ProjectTitle)
+		}
+		if task.ProjectID != "" {
+			fmt.Fprintf(&b, " (ID: `%s`)", task.ProjectID)
+		}
+		b.WriteString("\n")
+	}
+
+	if task.TaskWorkDir != "" {
+		fmt.Fprintf(&b, "**Task workdir:** `%s`\n", task.TaskWorkDir)
+	}
+	if task.PriorWorkDir != "" {
+		fmt.Fprintf(&b, "**Reused prior workdir:** `%s`\n", task.PriorWorkDir)
+	}
+	if hasWorkDir {
+		b.WriteString("Note: repo checkouts are created lazily under the task workdir when you run `multica repo checkout`; there may be no repo directory yet at startup.\n\n")
+	}
+
+	if hasRepos {
+		b.WriteString("Available code repositories (use `multica repo checkout <url>` to fetch):\n")
+		for _, repo := range task.Repos {
+			fmt.Fprintf(&b, "- %s\n", repo.URL)
+		}
+		b.WriteString("\n")
+	}
+
+	if hasResources {
+		b.WriteString("Project resources (also written to `.multica/project/resources.json`):\n")
+		for _, r := range task.ProjectResources {
+			switch r.ResourceType {
+			case "github_repo":
+				var payload struct {
+					URL               string `json:"url"`
+					DefaultBranchHint string `json:"default_branch_hint,omitempty"`
+				}
+				if json.Unmarshal(r.ResourceRef, &payload) == nil && payload.URL != "" {
+					branchHint := ""
+					if payload.DefaultBranchHint != "" {
+						branchHint = fmt.Sprintf(" (default branch: `%s`)", payload.DefaultBranchHint)
+					}
+					fmt.Fprintf(&b, "- **GitHub repo**: %s%s\n", payload.URL, branchHint)
+				}
+			default:
+				fmt.Fprintf(&b, "- **%s**: `%s`\n", r.ResourceType, string(r.ResourceRef))
+			}
+		}
+		b.WriteString("\n")
+	}
+
+	b.WriteString("When `project_id` is present, do NOT infer the repo from nearby workspace directories. Use the project context above, then `multica repo checkout`, then edit.\n")
+	b.WriteString("If you need more details, `multica issue get <id> --output json` now includes resolved project summary fields and `multica project resource list <id> --output json` returns the full resource list.\n")
 	return b.String()
 }

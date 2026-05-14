@@ -489,6 +489,68 @@ func TestCreateIssueExplicitBacklogPreserved(t *testing.T) {
 	testHandler.DeleteIssue(httptest.NewRecorder(), cleanupReq)
 }
 
+func TestGetIssueIncludesResolvedProjectSummary(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+
+	var projectID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO project (workspace_id, title) VALUES ($1, $2) RETURNING id
+	`, testWorkspaceID, "Issue detail project").Scan(&projectID); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	defer testPool.Exec(ctx, `DELETE FROM project_resource WHERE project_id = $1`, projectID)
+	defer testPool.Exec(ctx, `DELETE FROM project WHERE id = $1`, projectID)
+
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO project_resource (project_id, workspace_id, resource_type, resource_ref, position)
+		VALUES ($1, $2, 'github_repo', $3::jsonb, 0)
+	`, projectID, testWorkspaceID, `{"url":"https://github.com/example/project.git","default_branch_hint":"main"}`); err != nil {
+		t.Fatalf("create project resource: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title":      "Issue with project summary",
+		"status":     "todo",
+		"priority":   "medium",
+		"project_id": projectID,
+	})
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var created IssueResponse
+	json.NewDecoder(w.Body).Decode(&created)
+	defer testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
+
+	w = httptest.NewRecorder()
+	req = newRequest("GET", "/api/issues/"+created.ID, nil)
+	req = withURLParam(req, "id", created.ID)
+	testHandler.GetIssue(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GetIssue: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var fetched IssueResponse
+	json.NewDecoder(w.Body).Decode(&fetched)
+	if fetched.ProjectTitle == nil || *fetched.ProjectTitle != "Issue detail project" {
+		t.Fatalf("GetIssue: project_title = %#v, want %q", fetched.ProjectTitle, "Issue detail project")
+	}
+	if len(fetched.ProjectResources) != 1 {
+		t.Fatalf("GetIssue: project_resources len = %d, want 1", len(fetched.ProjectResources))
+	}
+	if len(fetched.RepoURLs) != 1 || fetched.RepoURLs[0] != "https://github.com/example/project.git" {
+		t.Fatalf("GetIssue: repo_urls = %#v, want github repo url", fetched.RepoURLs)
+	}
+	if fetched.ProjectResources[0].ResourceType != "github_repo" {
+		t.Fatalf("GetIssue: project_resources[0].resource_type = %q, want github_repo", fetched.ProjectResources[0].ResourceType)
+	}
+}
+
 func TestCreateSubIssueInheritsParentProject(t *testing.T) {
 	var projectID, parentID, childID string
 	defer func() {

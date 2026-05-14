@@ -71,8 +71,8 @@ func validateAndNormalizeResourceRef(resourceType string, ref json.RawMessage) (
 }
 
 type githubRepoRef struct {
-	URL                string `json:"url"`
-	DefaultBranchHint  string `json:"default_branch_hint,omitempty"`
+	URL               string `json:"url"`
+	DefaultBranchHint string `json:"default_branch_hint,omitempty"`
 }
 
 func validateGithubRepoRef(ref json.RawMessage) (json.RawMessage, error) {
@@ -280,4 +280,53 @@ func (h *Handler) listProjectResourcesForProject(ctx context.Context, projectID 
 		return nil
 	}
 	return rows
+}
+
+// projectResourcesToResponse converts DB project-resource rows to the compact
+// wire shape reused by issue details and daemon claim responses.
+func projectResourcesToResponse(rows []db.ProjectResource) []ProjectResourceData {
+	if len(rows) == 0 {
+		return nil
+	}
+	out := make([]ProjectResourceData, 0, len(rows))
+	for _, row := range rows {
+		label := ""
+		if row.Label.Valid {
+			label = row.Label.String
+		}
+		ref := json.RawMessage(row.ResourceRef)
+		if len(ref) == 0 {
+			ref = json.RawMessage("{}")
+		}
+		out = append(out, ProjectResourceData{
+			ID:           uuidToString(row.ID),
+			ResourceType: row.ResourceType,
+			ResourceRef:  ref,
+			Label:        label,
+		})
+	}
+	return out
+}
+
+// projectRepoURLs extracts attached github_repo resource URLs in stored order.
+func projectRepoURLs(rows []db.ProjectResource) []string {
+	if len(rows) == 0 {
+		return nil
+	}
+	urls := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if row.ResourceType != "github_repo" {
+			continue
+		}
+		var payload struct {
+			URL string `json:"url"`
+		}
+		if json.Unmarshal(row.ResourceRef, &payload) == nil && payload.URL != "" {
+			urls = append(urls, payload.URL)
+		}
+	}
+	if len(urls) == 0 {
+		return nil
+	}
+	return urls
 }
