@@ -9,8 +9,8 @@ import (
 	"github.com/multica-ai/multica/server/internal/util"
 )
 
-// These tests cover the squad-cleanup step added to DeleteAgentRuntime
-// (TMI-85): archived agents on a torn-down runtime can still be referenced
+// These tests cover the squad-cleanup step added to DeleteAgentRuntime:
+// archived agents on a torn-down runtime can still be referenced
 // as leaders of squads (including archived ones), and the squad.leader_id
 // FK is ON DELETE RESTRICT, so the subsequent DELETE FROM agent would fail.
 // The fix runs DeleteSquadsByArchivedAgentsOnRuntime first to drop those
@@ -210,7 +210,7 @@ func TestDeleteSquadsByArchivedAgentsOnRuntime_Query(t *testing.T) {
 }
 
 // TestDeleteAgentRuntime_RemovesSquadsLedByArchivedAgents is the end-to-end
-// regression test for TMI-85: a runtime whose only agents are archived but
+// regression test: a runtime whose only agents are archived but
 // still referenced as squad leaders must now delete cleanly.
 //
 // Before this fix the handler returned 500 "failed to clean up archived
