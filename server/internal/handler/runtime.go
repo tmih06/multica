@@ -711,10 +711,11 @@ func (h *Handler) DeleteAgentRuntime(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Remove squads whose leader is an archived agent on this runtime so the
-	// RESTRICT FK on squad.leader_id won't block the subsequent agent deletion.
+	// Remove archived squads whose leader is an archived agent on this runtime
+	// so the RESTRICT FK on squad.leader_id won't block the subsequent agent
+	// deletion. Active squads need an explicit transfer-oriented cleanup path.
 	if err := h.Queries.DeleteSquadsByArchivedAgentsOnRuntime(r.Context(), rt.ID); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to clean up orphaned squads")
+		writeError(w, http.StatusInternalServerError, "failed to clean up squads referencing archived agents")
 		return
 	}
 

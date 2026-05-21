@@ -118,6 +118,7 @@ DELETE FROM squad
 WHERE leader_id IN (
     SELECT id FROM agent WHERE runtime_id = $1 AND archived_at IS NOT NULL
 )
+  AND archived_at IS NOT NULL
 `
 
 func (q *Queries) DeleteSquadsByArchivedAgentsOnRuntime(ctx context.Context, runtimeID pgtype.UUID) error {

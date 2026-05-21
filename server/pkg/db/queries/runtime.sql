@@ -269,13 +269,15 @@ WHERE status = 'active'
 SELECT id FROM agent WHERE runtime_id = $1 AND archived_at IS NOT NULL;
 
 -- name: DeleteSquadsByArchivedAgentsOnRuntime :exec
--- Removes squads whose leader_id references an archived agent on the given
--- runtime. Must run before DeleteArchivedAgentsByRuntime so the RESTRICT FK
--- on squad.leader_id does not block the agent deletion.
+-- Removes archived squads whose leader_id references an archived agent on the
+-- given runtime. Must run before DeleteArchivedAgentsByRuntime so the RESTRICT
+-- FK on squad.leader_id does not block the agent deletion, while leaving any
+-- active squads for an explicit transfer-oriented cleanup path.
 DELETE FROM squad
 WHERE leader_id IN (
     SELECT id FROM agent WHERE runtime_id = $1 AND archived_at IS NOT NULL
-);
+)
+  AND archived_at IS NOT NULL;
 
 -- name: FindLegacyRuntimesByDaemonID :many
 -- Looks up runtime rows keyed on a prior (hostname-derived) daemon_id. Used

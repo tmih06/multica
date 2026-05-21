@@ -140,9 +140,10 @@ func runtimeExists(t *testing.T, runtimeID string) bool {
 }
 
 // TestDeleteSquadsByArchivedAgentsOnRuntime_Query exercises the new query in
-// isolation. It has to delete squads whose leader is an archived agent on
-// the target runtime, AND only those — squads led by active agents, or by
-// archived agents on a different runtime, must be left alone.
+// isolation. It has to delete archived squads whose leader is an archived
+// agent on the target runtime, AND only those — active squads, squads led by
+// active agents, or squads led by archived agents on a different runtime,
+// must be left alone.
 func TestDeleteSquadsByArchivedAgentsOnRuntime_Query(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
@@ -162,10 +163,10 @@ func TestDeleteSquadsByArchivedAgentsOnRuntime_Query(t *testing.T) {
 	archivedOnB := seedAgentOnRuntime(t, runtimeB, "ArchivedOnB", true)
 
 	// Squads:
-	//  - activeSquadA: archived leader on A, squad itself active   -> delete
+	//  - activeSquadA: archived leader on A, squad itself active     -> keep
 	//  - archivedSquadA: archived leader on A, squad itself archived -> delete (the bug)
-	//  - keptActiveLeader: active leader on A                       -> keep
-	//  - keptDifferentRuntime: archived leader but on B             -> keep
+	//  - keptActiveLeader: active leader on A                        -> keep
+	//  - keptDifferentRuntime: archived leader but on B              -> keep
 	activeSquadOnA := seedSquad(t, archivedOnA, "Active Squad On Runtime A", false)
 	archivedSquadOnA := seedSquad(t, archivedOnA, "Archived Squad On Runtime A", true)
 	keptActiveLeader := seedSquad(t, activeOnA, "Squad With Active Leader", false)
@@ -178,8 +179,8 @@ func TestDeleteSquadsByArchivedAgentsOnRuntime_Query(t *testing.T) {
 		t.Fatalf("DeleteSquadsByArchivedAgentsOnRuntime: %v", err)
 	}
 
-	if squadExists(t, activeSquadOnA) {
-		t.Errorf("active squad with archived leader on target runtime should be deleted")
+	if !squadExists(t, activeSquadOnA) {
+		t.Errorf("active squad with archived leader on target runtime must NOT be deleted")
 	}
 	if squadExists(t, archivedSquadOnA) {
 		t.Errorf("archived squad with archived leader on target runtime should be deleted (this is the bug case)")
