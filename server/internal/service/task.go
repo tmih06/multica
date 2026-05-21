@@ -437,11 +437,23 @@ func (s *TaskService) enqueueIssueTask(ctx context.Context, issue db.Issue, trig
 	return task, nil
 }
 
+// SkillMentionContext is stored in a task's context JSONB when skill mentions
+// are present in the triggering comment. The daemon claim handler reads this
+// and merges the injected skills with the agent's assigned skills.
+type SkillMentionContext struct {
+	InjectedSkillIDs []string `json:"injected_skill_ids,omitempty"`
+}
+
+// SkillMentionContextType marks a task as having injected skills from mentions.
+const SkillMentionContextType = "skill_mention"
+
 // EnqueueTaskForMention creates a queued task for a mentioned agent on an issue.
 // Unlike EnqueueTaskForIssue, this takes an explicit agent ID rather than
-// deriving it from the issue assignee.
-func (s *TaskService) EnqueueTaskForMention(ctx context.Context, issue db.Issue, agentID pgtype.UUID, triggerCommentID pgtype.UUID) (db.AgentTaskQueue, error) {
-	return s.enqueueMentionTask(ctx, issue, agentID, triggerCommentID, false, false)
+// deriving it from the issue assignee. injectedSkillIDs are skill UUIDs from
+// @skill mentions in the same comment that should be loaded alongside the
+// agent's assigned skills.
+func (s *TaskService) EnqueueTaskForMention(ctx context.Context, issue db.Issue, agentID pgtype.UUID, triggerCommentID pgtype.UUID, injectedSkillIDs []string) (db.AgentTaskQueue, error) {
+	return s.enqueueMentionTask(ctx, issue, agentID, triggerCommentID, false, false, injectedSkillIDs)
 }
 
 // EnqueueTaskForSquadLeader is the leader-role variant of EnqueueTaskForMention.
@@ -450,11 +462,11 @@ func (s *TaskService) EnqueueTaskForMention(ctx context.Context, issue db.Issue,
 // acting as the squad's leader (skip) from one posted while it was acting
 // as a worker (do not skip). This matters for agents that are simultaneously
 // the leader and a worker of the same squad — see migration 090.
-func (s *TaskService) EnqueueTaskForSquadLeader(ctx context.Context, issue db.Issue, leaderID pgtype.UUID, triggerCommentID pgtype.UUID) (db.AgentTaskQueue, error) {
-	return s.enqueueMentionTask(ctx, issue, leaderID, triggerCommentID, true, false)
+func (s *TaskService) EnqueueTaskForSquadLeader(ctx context.Context, issue db.Issue, leaderID pgtype.UUID, triggerCommentID pgtype.UUID, injectedSkillIDs []string) (db.AgentTaskQueue, error) {
+	return s.enqueueMentionTask(ctx, issue, leaderID, triggerCommentID, true, false, injectedSkillIDs)
 }
 
-func (s *TaskService) enqueueMentionTask(ctx context.Context, issue db.Issue, agentID pgtype.UUID, triggerCommentID pgtype.UUID, isLeader bool, forceFreshSession bool) (db.AgentTaskQueue, error) {
+func (s *TaskService) enqueueMentionTask(ctx context.Context, issue db.Issue, agentID pgtype.UUID, triggerCommentID pgtype.UUID, isLeader bool, forceFreshSession bool, injectedSkillIDs []string) (db.AgentTaskQueue, error) {
 	agent, err := s.Queries.GetAgent(ctx, agentID)
 	if err != nil {
 		slog.Error("mention task enqueue failed: agent not found", "issue_id", util.UUIDToString(issue.ID), "agent_id", util.UUIDToString(agentID), "error", err)
@@ -469,6 +481,15 @@ func (s *TaskService) enqueueMentionTask(ctx context.Context, issue db.Issue, ag
 		return db.AgentTaskQueue{}, fmt.Errorf("agent has no runtime")
 	}
 
+	var contextJSON []byte
+	if len(injectedSkillIDs) > 0 {
+		ctx_payload := SkillMentionContext{InjectedSkillIDs: injectedSkillIDs}
+		contextJSON, err = json.Marshal(ctx_payload)
+		if err != nil {
+			return db.AgentTaskQueue{}, fmt.Errorf("marshal skill mention context: %w", err)
+		}
+	}
+
 	task, err := s.Queries.CreateAgentTask(ctx, db.CreateAgentTaskParams{
 		AgentID:           agentID,
 		RuntimeID:         agent.RuntimeID,
@@ -478,6 +499,7 @@ func (s *TaskService) enqueueMentionTask(ctx context.Context, issue db.Issue, ag
 		TriggerSummary:    s.buildCommentTriggerSummary(ctx, triggerCommentID),
 		IsLeaderTask:      pgtype.Bool{Bool: isLeader, Valid: isLeader},
 		ForceFreshSession: pgtype.Bool{Bool: forceFreshSession, Valid: forceFreshSession},
+		Context:           contextJSON,
 	})
 	if err != nil {
 		slog.Error("mention task enqueue failed", "issue_id", util.UUIDToString(issue.ID), "agent_id", util.UUIDToString(agentID), "error", err)
@@ -1435,7 +1457,7 @@ func (s *TaskService) enqueueRerunTask(ctx context.Context, issue db.Issue, agen
 		util.UUIDToString(issue.AssigneeID) == util.UUIDToString(agentID) {
 		return s.enqueueIssueTask(ctx, issue, triggerCommentID, true)
 	}
-	return s.enqueueMentionTask(ctx, issue, agentID, triggerCommentID, isLeader, true)
+	return s.enqueueMentionTask(ctx, issue, agentID, triggerCommentID, isLeader, true, nil)
 }
 
 // HandleFailedTasks runs the post-failure side effects for a batch of
@@ -1611,6 +1633,53 @@ func (s *TaskService) LoadAgentSkills(ctx context.Context, agentID pgtype.UUID) 
 			data.Files = append(data.Files, AgentSkillFileData{Path: f.Path, Content: f.Content})
 		}
 		result = append(result, data)
+	}
+	return result
+}
+
+// LoadSkillsByID loads specific skills by their UUIDs with their files.
+// Used to inject skill mentions from comments into agent tasks.
+func (s *TaskService) LoadSkillsByID(ctx context.Context, skillIDs []string) []AgentSkillData {
+	if len(skillIDs) == 0 {
+		return nil
+	}
+	result := make([]AgentSkillData, 0, len(skillIDs))
+	for _, id := range skillIDs {
+		sk, err := s.Queries.GetSkill(ctx, util.MustParseUUID(id))
+		if err != nil {
+			slog.Debug("failed to load injected skill", "skill_id", id, "error", err)
+			continue
+		}
+		data := AgentSkillData{Name: sk.Name, Description: sk.Description, Content: sk.Content}
+		files, _ := s.Queries.ListSkillFiles(ctx, sk.ID)
+		for _, f := range files {
+			data.Files = append(data.Files, AgentSkillFileData{Path: f.Path, Content: f.Content})
+		}
+		result = append(result, data)
+	}
+	return result
+}
+
+// MergeSkills merges two skill slices, deduplicating by name (assigned skills
+// take precedence over injected ones with the same name).
+func MergeSkills(assigned, injected []AgentSkillData) []AgentSkillData {
+	if len(injected) == 0 {
+		return assigned
+	}
+	if len(assigned) == 0 {
+		return injected
+	}
+	seen := make(map[string]bool, len(assigned))
+	for _, sk := range assigned {
+		seen[sk.Name] = true
+	}
+	result := make([]AgentSkillData, len(assigned), len(assigned)+len(injected))
+	copy(result, assigned)
+	for _, sk := range injected {
+		if !seen[sk.Name] {
+			result = append(result, sk)
+			seen[sk.Name] = true
+		}
 	}
 	return result
 }

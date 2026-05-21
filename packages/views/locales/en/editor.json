@@ -51,6 +51,7 @@
   },
   "mention": {
     "group_users": "Users",
+    "group_skills": "Skills",
     "group_issues": "Issues",
     "all_members": "All members",
     "searching": "Searching...",

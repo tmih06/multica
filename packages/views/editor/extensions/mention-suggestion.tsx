@@ -25,6 +25,7 @@ import type {
   MemberWithUser,
   Agent,
   Squad,
+  Skill,
 } from "@multica/core/types";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { StatusIcon } from "../../issues/components/status-icon";
@@ -46,7 +47,7 @@ import { matchesPinyin } from "./pinyin-match";
 export interface MentionItem {
   id: string;
   label: string;
-  type: "member" | "agent" | "squad" | "issue" | "all";
+  type: "member" | "agent" | "squad" | "issue" | "skill" | "all";
   /** Secondary text shown beside the label (e.g. issue title) */
   description?: string;
   /** Issue status for StatusIcon rendering */
@@ -74,11 +75,14 @@ interface MentionGroup {
 
 function groupItems(items: MentionItem[]): MentionGroup[] {
   const users: MentionItem[] = [];
+  const skills: MentionItem[] = [];
   const issues: MentionItem[] = [];
 
   for (const item of items) {
     if (item.type === "issue") {
       issues.push(item);
+    } else if (item.type === "skill") {
+      skills.push(item);
     } else {
       users.push(item);
     }
@@ -86,6 +90,7 @@ function groupItems(items: MentionItem[]): MentionGroup[] {
 
   const groups: MentionGroup[] = [];
   if (users.length > 0) groups.push({ label: "Users", items: users });
+  if (skills.length > 0) groups.push({ label: "Skills", items: skills });
   if (issues.length > 0) groups.push({ label: "Issues", items: issues });
   return groups;
 }
@@ -248,6 +253,7 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
     const groups = groupItems(displayItems);
     const groupLabel = (label: string): string => {
       if (label === "Users") return t(($) => $.mention.group_users);
+      if (label === "Skills") return t(($) => $.mention.group_skills);
       if (label === "Issues") return t(($) => $.mention.group_issues);
       return label;
     };
@@ -351,6 +357,11 @@ function MentionRow({
         // eslint-disable-next-line i18next/no-literal-string
         <Badge variant="outline" className="ml-auto text-[10px] h-4 px-1.5">Squad</Badge>
       )}
+      {item.type === "skill" && (
+        // "Skill" is a glossary-protected product term — kept un-translated.
+        // eslint-disable-next-line i18next/no-literal-string
+        <Badge variant="outline" className="ml-auto text-[10px] h-4 px-1.5">Skill</Badge>
+      )}
     </button>
   );
 }
@@ -388,6 +399,7 @@ export function createMentionSuggestion(qc: QueryClient): Omit<
     const members: MemberWithUser[] = qc.getQueryData(workspaceKeys.members(wsId)) ?? [];
     const agents: Agent[] = qc.getQueryData(workspaceKeys.agents(wsId)) ?? [];
     const squads: Squad[] = qc.getQueryData(workspaceKeys.squads(wsId)) ?? [];
+    const skills: Skill[] = qc.getQueryData(workspaceKeys.skills(wsId)) ?? [];
     const cachedResponse = qc.getQueryData<ListIssuesCache>(issueKeys.list(wsId));
     const cachedIssues: Issue[] = cachedResponse ? flattenIssueBuckets(cachedResponse) : [];
 
@@ -437,6 +449,15 @@ export function createMentionSuggestion(qc: QueryClient): Omit<
       recency,
     );
 
+    const skillItems: MentionItem[] = skills
+      .filter((sk) => sk.name.toLowerCase().includes(q))
+      .map((sk) => ({
+        id: sk.id,
+        label: sk.name,
+        type: "skill" as const,
+        description: sk.description || undefined,
+      }));
+
     // Cached issues give an instant first paint; MentionList adds server
     // matches for done/cancelled and any other issues not in this cache.
     const issueItems: MentionItem[] = cachedIssues
@@ -447,7 +468,7 @@ export function createMentionSuggestion(qc: QueryClient): Omit<
       )
       .map(issueToMention);
 
-    return [...allItem, ...userItems, ...issueItems];
+    return [...allItem, ...userItems, ...skillItems, ...issueItems];
   }
 
   return {

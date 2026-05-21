@@ -51,6 +51,7 @@
   },
   "mention": {
     "group_users": "用户",
+    "group_skills": "技能",
     "group_issues": "issue",
     "all_members": "所有成员",
     "searching": "搜索中...",

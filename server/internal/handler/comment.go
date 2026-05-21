@@ -869,7 +869,16 @@ func shouldInheritParentMentions(parentComment *db.Comment, replyMentions []util
 	if parentComment == nil {
 		return false
 	}
-	if len(replyMentions) > 0 {
+	// Only agent/squad mentions block inheritance — skill, member, and issue
+	// mentions in the reply don't signal "talking to people instead of the agent".
+	hasAgentOrSquadMention := false
+	for _, m := range replyMentions {
+		if m.Type == "agent" || m.Type == "squad" {
+			hasAgentOrSquadMention = true
+			break
+		}
+	}
+	if hasAgentOrSquadMention {
 		return false
 	}
 	if replyAuthorType == "agent" {
@@ -900,6 +909,17 @@ func (h *Handler) enqueueMentionedAgentTasks(ctx context.Context, issue db.Issue
 	if shouldInheritParentMentions(parentComment, mentions, authorType) {
 		mentions = util.ParseMentions(parentComment.Content)
 	}
+
+	// Collect skill mention IDs first — these will be injected into every
+	// agent task enqueued from this comment so the daemon loads them
+	// alongside the agent's assigned skills.
+	var injectedSkillIDs []string
+	for _, m := range mentions {
+		if m.Type == "skill" {
+			injectedSkillIDs = append(injectedSkillIDs, m.ID)
+		}
+	}
+
 	for _, m := range mentions {
 		if m.Type == "squad" {
 			// @squad mention → trigger the squad's leader agent.
@@ -940,7 +960,7 @@ func (h *Handler) enqueueMentionedAgentTasks(ctx context.Context, issue db.Issue
 			if err != nil || hasPending {
 				continue
 			}
-			if _, err := h.TaskService.EnqueueTaskForSquadLeader(ctx, issue, leaderID, comment.ID); err != nil {
+			if _, err := h.TaskService.EnqueueTaskForSquadLeader(ctx, issue, leaderID, comment.ID, injectedSkillIDs); err != nil {
 				slog.Warn("enqueue squad leader mention task failed", "issue_id", uuidToString(issue.ID), "squad_id", m.ID, "error", err)
 			}
 			continue
@@ -977,7 +997,7 @@ func (h *Handler) enqueueMentionedAgentTasks(ctx context.Context, issue db.Issue
 		}
 		// Always use the current comment as the trigger so the agent reads the
 		// actual reply that mentioned it, not the thread root.
-		if _, err := h.TaskService.EnqueueTaskForMention(ctx, issue, agentUUID, comment.ID); err != nil {
+		if _, err := h.TaskService.EnqueueTaskForMention(ctx, issue, agentUUID, comment.ID, injectedSkillIDs); err != nil {
 			slog.Warn("enqueue mention agent task failed", "issue_id", uuidToString(issue.ID), "agent_id", m.ID, "error", err)
 		}
 	}

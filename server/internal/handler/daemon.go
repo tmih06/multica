@@ -1097,6 +1097,24 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 	resp := taskToResponse(*task)
 	if agent, err := h.Queries.GetAgent(r.Context(), task.AgentID); err == nil {
 		skills := h.TaskService.LoadAgentSkills(r.Context(), task.AgentID)
+
+		// Inject skills from skill mentions in the triggering comment.
+		// The task context JSONB may contain injected_skill_ids from
+		// @skill mentions that should be loaded alongside the agent's
+		// assigned skills.
+		if len(task.Context) > 0 {
+			var skillCtx service.SkillMentionContext
+			if err := json.Unmarshal(task.Context, &skillCtx); err == nil && len(skillCtx.InjectedSkillIDs) > 0 {
+				injectedSkills := h.TaskService.LoadSkillsByID(r.Context(), skillCtx.InjectedSkillIDs)
+				skills = service.MergeSkills(skills, injectedSkills)
+				slog.Debug("injected skill mention skills",
+					"task_id", uuidToString(task.ID),
+					"injected_count", len(skillCtx.InjectedSkillIDs),
+					"total_skills", len(skills),
+				)
+			}
+		}
+
 		var customEnv map[string]string
 		if agent.CustomEnv != nil {
 			if err := json.Unmarshal(agent.CustomEnv, &customEnv); err != nil {
